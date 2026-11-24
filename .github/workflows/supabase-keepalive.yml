@@ -1,0 +1,53 @@
+name: Supabase Keep-Alive Poke
+
+on:
+  schedule:
+    # Run every 3 days at 02:00 UTC (09:00 ICT) to prevent Supabase Free tier from pausing after 7 days of inactivity
+    - cron: "0 2 */3 * *"
+  workflow_dispatch:
+
+jobs:
+  poke-supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Poke Supabase or App Keep-Alive Endpoint
+        env:
+          KEEP_ALIVE_URL: ${{ secrets.KEEP_ALIVE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${KEEP_ALIVE_URL}" ]; then
+            echo "Poking app keep-alive endpoint..."
+            if [ -n "${CRON_SECRET}" ]; then
+              HTTP_STATUS=$(curl -sS -o /tmp/poke-resp.txt -w "%{http_code}" \
+                -H "Authorization: Bearer ${CRON_SECRET}" \
+                "${KEEP_ALIVE_URL}")
+            else
+              HTTP_STATUS=$(curl -sS -o /tmp/poke-resp.txt -w "%{http_code}" \
+                "${KEEP_ALIVE_URL}")
+            fi
+          elif [ -n "${SUPABASE_URL}" ] && [ -n "${SUPABASE_ANON_KEY}" ]; then
+            echo "Poking Supabase REST API directly..."
+            CLEAN_URL="${SUPABASE_URL%/}"
+            HTTP_STATUS=$(curl -sS -o /tmp/poke-resp.txt -w "%{http_code}" \
+              -H "apikey: ${SUPABASE_ANON_KEY}" \
+              -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+              "${CLEAN_URL}/rest/v1/academic_terms?select=id&limit=1")
+          else
+            echo "::error::Please set either KEEP_ALIVE_URL or (SUPABASE_URL + SUPABASE_ANON_KEY) in GitHub Repository Secrets."
+            exit 1
+          fi
+
+          echo "HTTP Status: ${HTTP_STATUS}"
+          cat /tmp/poke-resp.txt || true
+          echo ""
+
+          if [ "${HTTP_STATUS}" -lt 200 ] || [ "${HTTP_STATUS}" -ge 300 ]; then
+            echo "::error::Keep-alive poke failed with HTTP ${HTTP_STATUS}"
+            exit 1
+          fi
+
+          echo "Supabase keep-alive poke succeeded."
